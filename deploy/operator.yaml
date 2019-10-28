@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assembly-operator-config
+data:
+  config.yaml: |
+    lmBase: https://nimrod:8290
+    lmUsername: jack
+    lmPassword: jack
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assembly-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: assembly-operator
+  template:
+    metadata:
+      labels:
+        name: assembly-operator
+    spec:
+      serviceAccountName: assembly-operator
+      containers:
+        - name: assembly-operator
+          # Replace this with the built image name
+          image: 10.220.217.248:32736/assembly-operator:0.1.0
+          command:
+          - assembly-operator
+          imagePullPolicy: Always
+          env:
+            - name: WATCH_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPERATOR_NAME
+              value: "assembly-operator"
+          volumeMounts:
+          - name: assembly-operator-config
+            mountPath: /var/assembly-operator
+      volumes:
+        - name: assembly-operator-config
+          configMap:
+            name: assembly-operator-config

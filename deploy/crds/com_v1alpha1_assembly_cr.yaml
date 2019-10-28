@@ -1,0 +1,11 @@
+apiVersion: com.accantosystems.stratoss/v1alpha1
+kind: Assembly
+metadata:
+  name: ippbx
+spec:
+  AssemblyName:   "ippbx"
+  DescriptorName: "assembly::ip-pbx-openstack::1.0"
+  IntendedState:  "Active"
+  Properties:
+    resourceManager: "brent"
+    deploymentLocation: "winterfell"
