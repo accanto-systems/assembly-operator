@@ -2,7 +2,7 @@
 
 Assembly Operator is a [Kubernetes Operator](https://coreos.com/operators/) that is built using the [Kubernetes Operator SDK](https://github.com/operator-framework/operator-sdk).
 
-Operator SDK uses uses [Go modules](https://github.com/golang/go/wiki/Modules), so make sure GO111MODULE is set to "on":
+Operator SDK uses [Go modules](https://github.com/golang/go/wiki/Modules), so make sure GO111MODULE is set to "on":
 
 ```
 export GO111MODULE=on
