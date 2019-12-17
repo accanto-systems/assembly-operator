@@ -47,6 +47,11 @@ type UpgradeAssemblyBody struct {
 	Properties     map[string]string `json:"properties"`
 }
 
+type ChangeAssemblyStateBody struct {
+	AssemblyName   string            `json:"assemblyName"`
+	IntendedState string            `json:"intendedState"`
+}
+
 type DeleteAssemblyBody struct {
 	AssemblyName   string            `json:"assemblyName"`
 }
@@ -199,7 +204,7 @@ func (i *Ishtar) UpgradeAssembly(reqLogger logr.Logger, assembly UpgradeAssembly
 
 	bytes, err := json.Marshal(assembly)
 	if err != nil {
-		reqLogger.Error(err, "Unable to create assembly template")
+		reqLogger.Error(err, "Unable to create upgrade assembly template")
 		return "", err
 	}
 	assemblyJSON := string(bytes)
@@ -229,6 +234,44 @@ func (i *Ishtar) UpgradeAssembly(reqLogger logr.Logger, assembly UpgradeAssembly
 	return ss[len(ss)-1], nil
 }
 
+func (i *Ishtar) ChangeAssemblyState(reqLogger logr.Logger, assembly ChangeAssemblyStateBody) (string, error) {
+	accessToken, err := i.LMSecurityCtrl.getAccessToken()
+	if err != nil {
+		reqLogger.Error(err, "Unable to get access token")
+		return "", err
+	}
+
+	bytes, err := json.Marshal(assembly)
+	if err != nil {
+		reqLogger.Error(err, "Unable to change assembly state template")
+		return "", err
+	}
+	assemblyJSON := string(bytes)
+
+	reqLogger.Info(fmt.Sprintf("Changing assembly state %s", assemblyJSON))
+	reqLogger.Info(fmt.Sprintf("Access token %s", accessToken))
+
+	resp, err := i.restClient.R().
+		EnableTrace().
+		SetBody(assemblyJSON).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", accessToken)).
+		Post("https://ishtar:8280/api/intent/changeAssemblyState")
+	if err != nil {
+		reqLogger.Error(err, "Unable to change assembly state assembly")
+		return "", err
+	}
+
+	reqLogger.Info(fmt.Sprintf("Change assembly state status %d", resp.StatusCode()))
+
+	if resp.StatusCode() != http.StatusCreated {
+		return "", fmt.Errorf("Change assembly state failed %s %s", resp.Body(), string(resp.StatusCode()))
+	}
+
+	location := resp.Header().Get(http.CanonicalHeaderKey("Location"))
+	ss := strings.Split(location, "/")
+	return ss[len(ss)-1], nil
+}
 
 func (i *Ishtar) DeleteAssembly(reqLogger logr.Logger, assembly DeleteAssemblyBody) (string, error) {
 	accessToken, err := i.LMSecurityCtrl.getAccessToken()

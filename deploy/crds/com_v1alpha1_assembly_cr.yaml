@@ -3,9 +3,9 @@ kind: Assembly
 metadata:
   name: ippbx
 spec:
-  AssemblyName:   "ippbx"
-  DescriptorName: "assembly::ip-pbx-openstack::1.0"
-  IntendedState:  "Active"
-  Properties:
+  assemblyName:   "ippbx"
+  descriptorName: "assembly::ip-pbx-openstack::1.0"
+  intendedState:  "Active"
+  properties:
     resourceManager: "brent"
     deploymentLocation: "winterfell"

@@ -206,10 +206,10 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 				return reconcile.Result{}, err
 			}
 		}
-		instance.Status.Transition = "Creating"
+		instance.Status.Transition = "Create"
 		instance.Status.ProcessID = processID
 		instance.Status.ProcessStatus = "Pending"
-		instance.Status.State = ""
+		instance.Status.State = "Pending"
 		instance.Status.StateReason = ""
 		err = r.client.Status().Update(context.TODO(), instance)
 		if err != nil {
@@ -234,7 +234,7 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 	}
 	
 	//Check for existing transition
-	if instance.Status.Transition == "Creating" || instance.Status.Transition == "Updating" || instance.Status.Transition == "Removing" {
+	if instance.Status.ProcessStatus == "Pending" || instance.Status.ProcessStatus == "In Progress" {
 		reqLogger.Info(fmt.Sprintf("Fetching Process %s for Assembly %s", instance.Status.ProcessID, instance.Spec.AssemblyName))
 		process, err := r.ishtar.GetProcess(reqLogger, instance.Status.ProcessID)
 		if err != nil {
@@ -246,16 +246,9 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		instance.Status.ProcessStatus = process.Status
 		instance.Status.StateReason = ""
 		transitionFinished := false
-		assemblyShouldExist := instance.Status.Transition == "Creating" || instance.Status.Transition == "Updating"
+		assemblyShouldExist := instance.Status.Transition != "Remove" || (process.Status == "Pending" || process.Status == "In Progress")
 		if process.Status == "Completed" || process.Status == "Cancelled" || process.Status == "Failed" {
 			transitionFinished = true
-			if instance.Status.Transition == "Creating" {
-				instance.Status.Transition = "Create"
-			}else if instance.Status.Transition == "Updating" {
-				instance.Status.Transition = "Update"
-			}else if instance.Status.Transition == "Removing" {
-				instance.Status.Transition = "Remove"
-			}
 		}
 		if process.Status == "Failed" {
 			instance.Status.StateReason = process.StatusReason
@@ -344,7 +337,7 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 					// Ends reconciliation
 					return reconcile.Result{}, nil
 				}
-				instance.Status.Transition = "Removing"
+				instance.Status.Transition = "Remove"
 				instance.Status.ProcessID = processID
 				instance.Status.ProcessStatus = "Pending"
 				instance.Status.State = assembly.State
@@ -377,10 +370,13 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 	}
 
 	hasDifference := false
+	hasStateChange := false
 	if assembly.Name != instance.Spec.AssemblyName {
 		//TODO - error on name change
 	}
-	//TODO - state change difference
+	if assembly.State != instance.Spec.IntendedState {
+		hasStateChange = true
+	}
 	if assembly.DescriptorName != instance.Spec.DescriptorName {
 		hasDifference = true
 	}
@@ -394,6 +390,7 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		}
 	}
 
+	//Handle property differences before state changes
 	if hasDifference {
 		//Ready to apply differences
 		reqLogger.Info(fmt.Sprintf("Requesting upgrade of Assembly %s", instance.Spec.AssemblyName))
@@ -413,7 +410,39 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 			}
 			return reconcile.Result{}, nil
 		}
-		instance.Status.Transition = "Updating"
+		instance.Status.Transition = "Update"
+		instance.Status.ProcessID = processID
+		instance.Status.ProcessStatus = "Pending"
+		instance.Status.State = assembly.State
+		instance.Status.StateReason = ""
+		err = r.client.Status().Update(context.TODO(), instance)
+		if err != nil {
+			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
+			return reconcile.Result{}, err
+		}
+		// requeue to check on progress
+		return reconcile.Result{Requeue: true}, nil
+	}
+
+	if hasStateChange {
+		//Must change state
+		reqLogger.Info(fmt.Sprintf("Requesting state change of Assembly %s to %s", instance.Spec.AssemblyName, instance.Spec.IntendedState))
+		processID, err := r.ishtar.ChangeAssemblyState(reqLogger, ChangeAssemblyStateBody{
+			AssemblyName: assembly.Name,
+			IntendedState: instance.Spec.IntendedState,
+		})
+		if err != nil {
+			reqLogger.Error(err, fmt.Sprintf("Failed to request state change of Assembly %s", instance.Spec.AssemblyName))
+			instance.Status.State = "ERROR"
+			instance.Status.StateReason = err.Error()
+			err = r.client.Status().Update(context.TODO(), instance)
+			if err != nil {
+				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
+				return reconcile.Result{}, err
+			}
+			return reconcile.Result{}, nil
+		}
+		instance.Status.Transition = "ChangeState"
 		instance.Status.ProcessID = processID
 		instance.Status.ProcessStatus = "Pending"
 		instance.Status.State = assembly.State
