@@ -49,6 +49,8 @@ containers:
 
 # Uninstall
 
+**NOTE:** it is recommended that you remove all Assembly resources managed by the operator before uninstalling. 
+
 Removes from the default namespace:
 
 ```

@@ -8,7 +8,7 @@ usage(){
 
     options:
         -v, --version   REQUIRED: version number of operator
-        -d, --docker    OPTIONAL: dev - build a TAR of the docker image, prod - build and push the docker image to the accanto organisation on 
+        -d, --docker    OPTIONAL: dev - build a TAR of the docker image, prod - build and push the docker image to the accanto organisation on Dockerhub
     "
 }
 
@@ -58,12 +58,12 @@ mkdir pkgdist
 
 echo "Copying deployment sources to pkgdist directory"
 cp -r deploy/* pkgdist
-cp -r deploy-docs/* pkgdist
-cp -r deploy-scripts/* pkgdist
+cp -r docs/dist-docs/* pkgdist
+cp -r dist-scripts/* pkgdist
 
 if [[ $docker = "dev" ]]; then 
     echo "Setting image version in operator.yaml to assembly-operator:$version"
-    sed -i "s%^\(\s*image\s*:\s*\).*%\1assembly-operator:$version%" dist/operator.yaml   
+    sed -i "s%^\(\s*image\s*:\s*\).*%\1assembly-operator:$version%" pkgdist/operator.yaml   
 else
     echo "Setting image version in operator.yaml to accanto/assembly-operator:$version"
     sed -i "s%^\(\s*image\s*:\s*\).*%\1accanto/assembly-operator:$version%" pkgdist/operator.yaml   
