@@ -13,10 +13,10 @@ type AssemblySpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
 	// Add custom validation using kubebuilder tags: https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html
-	AssemblyName   string            `json:"AssemblyName"`
-	DescriptorName string            `json:"DescriptorName"`
-	IntendedState  string            `json:"IntendedState"`
-	Properties     map[string]string `json:"Properties"`
+	AssemblyName   string            `json:"assemblyName"`
+	DescriptorName string            `json:"descriptorName"`
+	IntendedState  string            `json:"intendedState"`
+	Properties     map[string]string `json:"properties"`
 }
 
 // AssemblyStatus defines the observed state of Service
@@ -25,8 +25,12 @@ type AssemblyStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
 	// Add custom validation using kubebuilder tags: https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html
-	ProcessID string `json:"ProcessID"`
-	Status    string `json:"Status"`
+	ID string `json:"assemblyId"`
+	Transition string `json:"transition"`
+	ProcessID string `json:"processId"`
+	ProcessStatus string `json:"processStatus"`
+	State string `json:"state"`
+	StateReason string `json:"stateReason"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

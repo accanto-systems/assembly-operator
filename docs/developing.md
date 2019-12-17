@@ -32,5 +32,6 @@ docker image push 10.220.217.248:32736/assembly-operator:0.1.0
 or to Docker Hub:
 
 ```
-docker image push assembly-operator:0.1.0
+docker image tag assembly-operator:0.1.0 accanto/assembly-operator:0.1.0
+docker image push accanto/assembly-operator:0.1.0
 ```

@@ -3,6 +3,22 @@ kind: CustomResourceDefinition
 metadata:
   name: assemblys.com.accantosystems.stratoss
 spec:
+  additionalPrinterColumns:
+  - name: State
+    type: string
+    description: The current State of the Assembly
+    JSONPath: .status.state
+  - name: Transition
+    type: string
+    description: The last transition executed on this Assembly
+    JSONPath: .status.transition
+  - name: Transition-Status
+    type: string
+    description: The status of the last transition executed on this Assembly
+    JSONPath: .status.processStatus
+  - name: Age
+    type: date
+    JSONPath: .metadata.creationTimestamp
   group: com.accantosystems.stratoss
   names:
     kind: Assembly
@@ -29,33 +45,33 @@ spec:
           type: object
         spec:
           properties:
-            AssemblyName:
+            assemblyName:
               description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                 Important: Run "operator-sdk generate k8s" to regenerate code after
                 modifying this file Add custom validation using kubebuilder tags:
                 https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html'
               type: string
-            DescriptorName:
+            descriptorName:
               description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                 Important: Run "operator-sdk generate k8s" to regenerate code after
                 modifying this file Add custom validation using kubebuilder tags:
                 https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html'
               type: string
-            IntendedState:
+            intendedState:
               description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
                 Important: Run "operator-sdk generate k8s" to regenerate code after
                 modifying this file Add custom validation using kubebuilder tags:
                 https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html'
               type: string
-            Properties:
+            properties:
               properties:
               required:
               type: object
           required:
-          - AssemblyName
-          - DescriptorName
-          - IntendedState
-          - Properties
+          - assemblyName
+          - descriptorName
+          - intendedState
+          - properties
           type: object
         status:
           type: object
