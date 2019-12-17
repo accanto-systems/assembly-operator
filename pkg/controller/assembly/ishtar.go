@@ -41,6 +41,16 @@ type CreateAssemblyBody struct {
 	Properties     map[string]string `json:"properties"`
 }
 
+type UpgradeAssemblyBody struct {
+	AssemblyName   string            `json:"assemblyName"`
+	DescriptorName string            `json:"descriptorName"`
+	Properties     map[string]string `json:"properties"`
+}
+
+type DeleteAssemblyBody struct {
+	AssemblyName   string            `json:"assemblyName"`
+}
+
 func NewIshtar(client *resty.Client, lmConfiguration *LMConfiguration) *Ishtar {
 	log.Info(fmt.Sprintf("NewIshtar %s %s %s ", lmConfiguration.LMBase, lmConfiguration.LMUsername, lmConfiguration.LMPassword))
 	lmSecurityCtrl := LMSecurityCtrl{
@@ -65,7 +75,7 @@ type HealthStatus struct {
 }
 
 func (c *LMSecurityCtrl) login(username string, password string) (*Auth, error) {
-	url := fmt.Sprintf("%s/api/login", c.lmBase)
+	url := fmt.Sprintf("%s/ui/api/login", c.lmBase)
 	data := login{
 		Username: username,
 		Password: password,
@@ -180,6 +190,85 @@ func (i *Ishtar) CreateAssembly(reqLogger logr.Logger, assembly CreateAssemblyBo
 	return ss[len(ss)-1], nil
 }
 
+func (i *Ishtar) UpgradeAssembly(reqLogger logr.Logger, assembly UpgradeAssemblyBody) (string, error) {
+	accessToken, err := i.LMSecurityCtrl.getAccessToken()
+	if err != nil {
+		reqLogger.Error(err, "Unable to get access token")
+		return "", err
+	}
+
+	bytes, err := json.Marshal(assembly)
+	if err != nil {
+		reqLogger.Error(err, "Unable to create assembly template")
+		return "", err
+	}
+	assemblyJSON := string(bytes)
+
+	reqLogger.Info(fmt.Sprintf("Modify assembly %s", assemblyJSON))
+	reqLogger.Info(fmt.Sprintf("Access token %s", accessToken))
+
+	resp, err := i.restClient.R().
+		EnableTrace().
+		SetBody(assemblyJSON).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", accessToken)).
+		Post("https://ishtar:8280/api/intent/upgradeAssembly")
+	if err != nil {
+		reqLogger.Error(err, "Unable to modify assembly")
+		return "", err
+	}
+
+	reqLogger.Info(fmt.Sprintf("Modify assembly status %d", resp.StatusCode()))
+
+	if resp.StatusCode() != http.StatusCreated {
+		return "", fmt.Errorf("Modify assembly failed %s %s", resp.Body(), string(resp.StatusCode()))
+	}
+
+	location := resp.Header().Get(http.CanonicalHeaderKey("Location"))
+	ss := strings.Split(location, "/")
+	return ss[len(ss)-1], nil
+}
+
+
+func (i *Ishtar) DeleteAssembly(reqLogger logr.Logger, assembly DeleteAssemblyBody) (string, error) {
+	accessToken, err := i.LMSecurityCtrl.getAccessToken()
+	if err != nil {
+		reqLogger.Error(err, "Unable to get access token")
+		return "", err
+	}
+
+	bytes, err := json.Marshal(assembly)
+	if err != nil {
+		reqLogger.Error(err, "Unable to create assembly delete body")
+		return "", err
+	}
+	assemblyJSON := string(bytes)
+
+	reqLogger.Info(fmt.Sprintf("Delete assembly %s", assemblyJSON))
+	reqLogger.Info(fmt.Sprintf("Access token %s", accessToken))
+
+	resp, err := i.restClient.R().
+		EnableTrace().
+		SetBody(assemblyJSON).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", accessToken)).
+		Post("https://ishtar:8280/api/intent/deleteAssembly")
+	if err != nil {
+		reqLogger.Error(err, "Unable to delete assembly")
+		return "", err
+	}
+
+	reqLogger.Info(fmt.Sprintf("Delete assembly status %d", resp.StatusCode()))
+
+	if resp.StatusCode() != http.StatusCreated {
+		return "", fmt.Errorf("Delete assembly failed %s %s", resp.Body(), string(resp.StatusCode()))
+	}
+
+	location := resp.Header().Get(http.CanonicalHeaderKey("Location"))
+	ss := strings.Split(location, "/")
+	return ss[len(ss)-1], nil
+}
+
 func (i *Ishtar) Health(reqLogger logr.Logger) (bool, error) {
 	accessToken, err := i.LMSecurityCtrl.getAccessToken()
 	if err != nil {
@@ -210,26 +299,70 @@ func (i *Ishtar) Health(reqLogger logr.Logger) (bool, error) {
 	return healthStatus.Status == "UP", nil
 }
 
-func (i *Ishtar) GetAssemblyStatus(reqLogger logr.Logger, processID string) (string, error) {
+func (i *Ishtar) GetAssembly(reqLogger logr.Logger, assemblyID string) (Assembly, error) {
 	accessToken, err := i.LMSecurityCtrl.getAccessToken()
 	if err != nil {
 		reqLogger.Error(err, "Unable to get access token")
-		return "", err
+		return Assembly{}, err
 	}
 
 	resp, err := i.restClient.R().
 		EnableTrace().
-		SetResult(map[string]interface{}{}).
+		SetResult(Assembly{}).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", accessToken)).
-		Get(fmt.Sprintf("https://ishtar:8280/api/processes/%s", processID))
+		Get(fmt.Sprintf("https://ishtar:8280/api/topology/assemblies/%s", assemblyID))
 	if err != nil {
-		return "", err
+		return Assembly{}, err
 	}
 
 	if resp.StatusCode() != http.StatusOK {
-		return "", fmt.Errorf("Get process failed %s %s", resp.Body(), string(resp.StatusCode()))
+		return Assembly{}, fmt.Errorf("Get assembly failed %s %s", resp.Body(), string(resp.StatusCode()))
 	}
 
-	result := (*resp.Result().(*map[string]interface{}))
-	return result["status"].(string), nil
+	result := (*resp.Result().(*Assembly))
+	return result, nil
+}
+
+func (i *Ishtar) GetProcess(reqLogger logr.Logger, processID string) (Process, error) {
+	accessToken, err := i.LMSecurityCtrl.getAccessToken()
+	if err != nil {
+		reqLogger.Error(err, "Unable to get access token")
+		return Process{}, err
+	}
+
+	resp, err := i.restClient.R().
+		EnableTrace().
+		SetResult(Process{}).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", accessToken)).
+		Get(fmt.Sprintf("https://ishtar:8280/api/processes/%s", processID))
+	if err != nil {
+		return Process{}, err
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return Process{}, fmt.Errorf("Get process failed %s %s", resp.Body(), string(resp.StatusCode()))
+	}
+
+	result := (*resp.Result().(*Process))
+	return result, nil
+}
+
+type Process struct {
+	ID string `json:"id"`
+	AssemblyID string `json:"assemblyId"`
+	Status string `json:"status"`
+	StatusReason string `json:"statusReason"`
+}
+
+type Assembly struct {
+	ID string `json:"id"`
+	Name string `json:"name"`
+	State string `json:"state"`
+	DescriptorName string `json:"descriptorName"`
+	Properties []AssemblyProperty `json:"properties"`
+}
+
+type AssemblyProperty struct {
+	Name string `json:"name"`
+	Value string `json:"value"`
 }
