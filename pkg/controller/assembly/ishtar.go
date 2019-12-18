@@ -358,6 +358,9 @@ func (i *Ishtar) GetAssembly(reqLogger logr.Logger, assemblyID string) (Assembly
 		return Assembly{}, err
 	}
 
+	if resp.StatusCode() == http.StatusNotFound {
+		return Assembly{}, fmt.Errorf("Assembly not found (%s)", assemblyID)
+	}
 	if resp.StatusCode() != http.StatusOK {
 		return Assembly{}, fmt.Errorf("Get assembly failed %s %s", resp.Body(), string(resp.StatusCode()))
 	}

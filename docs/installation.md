@@ -13,7 +13,7 @@ tar -xvzf assembly-operator-deployment-0.1.0.tgz
 Quick install (read the [INSTALL.md](./dist-docs/INSTALL.md) included in the archive for more options):
 
 ```
-cd assembly-operator-0.1.0
+cd assembly-operator-deployment-0.1.0
 ./apply.sh
 ```
 

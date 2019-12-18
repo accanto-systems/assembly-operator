@@ -260,17 +260,22 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 			assembly, err := r.ishtar.GetAssembly(reqLogger, instance.Status.ID)
 			if err != nil {
 				reqLogger.Error(err, fmt.Sprintf("Failed to get assembly %s", instance.Spec.AssemblyName))
-				instance.Status.State = "ERROR"
-				instance.Status.StateReason = err.Error()
-				err = r.client.Status().Update(context.TODO(), instance)
-				if err != nil {
-					reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-					return reconcile.Result{}, err
+				if err.Error() == fmt.Sprintf("Assembly not found (%s)", instance.Status.ID) && instance.Status.Transition == "Remove" {
+					reqLogger.Info(fmt.Sprintf("Ignoring failure to fetch Assembly instance %s as it's being removed", instance.Spec.AssemblyName))
+				}else{
+					instance.Status.State = "ERROR"
+					instance.Status.StateReason = err.Error()
+					err = r.client.Status().Update(context.TODO(), instance)
+					if err != nil {
+						reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
+						return reconcile.Result{}, err
+					}
+					//Ends reconciliation
+					return reconcile.Result{}, nil
 				}
-				//Ends reconciliation
-				return reconcile.Result{}, nil
+			}else{
+				instance.Status.State = assembly.State
 			}
-			instance.Status.State = assembly.State
 		}
 
 		err = r.client.Status().Update(context.TODO(), instance)
