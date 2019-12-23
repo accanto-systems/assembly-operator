@@ -1,7 +1,7 @@
 package apis
 
 import (
-	"github.com/orgs/accanto-systems/assembly-operator/pkg/apis/com/v1alpha1"
+	"github.com/accanto/assembly-operator/pkg/apis/stratoss/v1alpha1"
 )
 
 func init() {

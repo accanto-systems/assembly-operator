@@ -1,7 +1,7 @@
 package controller
 
 import (
-	"github.com/orgs/accanto-systems/assembly-operator/pkg/controller/assembly"
+	"github.com/accanto/assembly-operator/pkg/controller/assembly"
 )
 
 func init() {

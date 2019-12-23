@@ -1,0 +1,11 @@
+apiVersion: stratoss.accantosystems.com/v1alpha1
+kind: Assembly
+metadata:
+  name: example-assembly
+spec:
+  descriptorName: assembly::Example::1.0
+  intendedState: Active
+  properties:
+    someProperty: ValueA
+    resourceManager: test-rm
+    deploymentLocation: admin@local

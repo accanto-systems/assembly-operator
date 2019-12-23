@@ -69,6 +69,12 @@ else
     sed -i "s%^\(\s*image\s*:\s*\).*%\1accanto/assembly-operator:$version%" pkgdist/operator.yaml   
 fi
 
+echo "Regenerating K8s"
+operator-sdk generate k8s
+
+echo "Regenerating CRDs"
+operator-sdk generate crds
+
 echo "Building deployment package assembly-operator-deployment-$version.tgz"
 tar -cvzf assembly-operator-deployment-$version.tgz pkgdist --transform "s!^pkgdist\($\|/\)!assembly-operator-deployment-$version\1!"
 

@@ -4,9 +4,10 @@ metadata:
   name: assembly-operator-config
 data:
   config.yaml: |
-    lmBase: https://nimrod:8290
-    lmUsername: jack
-    lmPassword: jack
+    base: https://ishtar:8280
+    client: LmClient
+    clientSecret: pass123
+    secure: true
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,7 +26,8 @@ spec:
       serviceAccountName: assembly-operator
       containers:
         - name: assembly-operator
-          image: accanto/assembly-operator:0.1.0
+          # Replace this with the built image name
+          image: accanto/assembly-operator
           command:
           - assembly-operator
           imagePullPolicy: Always

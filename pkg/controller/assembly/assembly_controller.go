@@ -2,98 +2,96 @@ package assembly
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"time"
 
-	"io/ioutil"
-
-	"gopkg.in/yaml.v2"
-
-	resty "github.com/go-resty/resty/v2"
-	comv1alpha1 "github.com/orgs/accanto-systems/assembly-operator/pkg/apis/com/v1alpha1"
-
+	lm "github.com/accanto/assembly-operator/internal/lm"
+	stratossv1alpha1 "github.com/accanto/assembly-operator/pkg/apis/stratoss/v1alpha1"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-
-	// "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-
-	// "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-var log = logf.Log.WithName("controller_service")
+var log = logf.Log.WithName("controller_assembly")
 
-/**
-* USER ACTION REQUIRED: This is a scaffold file intended for the user to modify with their own Controller
-* business logic.  Delete these comments after modifying this file.*
- */
+const assemblyFinalizer = "finalizer.assemblies.stratoss.accantosystems.com"
+const stateError = "ERROR"
 
-// Add creates a new Service Controller and adds it to the Manager. The Manager will set fields on the Controller
+type logKeys struct {
+	AssemblyName          string
+	AssemblyID            string
+	ProcessID             string
+	ProcessStatus         string
+	IntendedState         string
+	NumberOfErrors        string
+	PropertyName          string
+	DesiredPropertyValue  string
+	ObservedPropertyName  string
+	ObservedPropertyValue string
+}
+
+var LogKeys = &logKeys{
+	AssemblyName:          "assemblyName",
+	AssemblyID:            "assemblyId",
+	ProcessID:             "processId",
+	ProcessStatus:         "processStatus",
+	IntendedState:         "intendedState",
+	NumberOfErrors:        "errorCount",
+	PropertyName:          "propertyName",
+	DesiredPropertyValue:  "desiredPropertyValue",
+	ObservedPropertyValue: "observedPropertyValue",
+}
+
+// Add creates a new Assembly Controller and adds it to the Manager. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
 func Add(mgr manager.Manager) error {
-	return add(mgr, newReconciler(mgr))
-}
-
-type LMConfiguration struct {
-	LMUsername string `yaml:"lmUsername"`
-	LMPassword string `yaml:"lmPassword"`
-	LMBase     string `yaml:"lmBase"`
-}
-
-func getLMConfiguration() *LMConfiguration {
-	yamlFile, err := ioutil.ReadFile("/var/assembly-operator/config.yaml")
+	reconciler, err := newReconciler(mgr)
 	if err != nil {
-		log.Info(fmt.Sprintf("yamlFile.Get err   #%v ", err))
+		return err
 	}
-	configuration := LMConfiguration{}
-	err = yaml.Unmarshal(yamlFile, &configuration)
-	if err != nil {
-		log.Info(fmt.Sprintf("Unmarshal: %v", err))
-	}
-
-	return &configuration
+	return add(mgr, reconciler)
 }
 
 // newReconciler returns a new reconcile.Reconciler
-func newReconciler(mgr manager.Manager) reconcile.Reconciler {
-	client := resty.New()
-	client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
-	client.SetTimeout(2 * time.Minute)
-
-	configuration := getLMConfiguration()
-	log.Info(fmt.Sprintf("configuration: #%v", *configuration))
-
-	return &ReconcileService{client: mgr.GetClient(), scheme: mgr.GetScheme(), restClient: client, ishtar: NewIshtar(client, configuration)}
+func newReconciler(mgr manager.Manager) (reconcile.Reconciler, error) {
+	lmConfiguration, err := lm.ReadLMConfiguration()
+	if err != nil {
+		return &AssemblyReconciler{}, err
+	}
+	return &AssemblyReconciler{
+		k8sClient: mgr.GetClient(),
+		scheme:    mgr.GetScheme(),
+		lmClient:  lm.BuildClient(lmConfiguration),
+	}, nil
 }
 
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	// Create a new controller
-	c, err := controller.New("service-controller", mgr, controller.Options{Reconciler: r})
+	c, err := controller.New("assembly-controller", mgr, controller.Options{Reconciler: r})
 	if err != nil {
 		return err
 	}
 
-	// Watch for changes to primary resource Service
-	err = c.Watch(&source.Kind{Type: &comv1alpha1.Assembly{}}, &handler.EnqueueRequestForObject{})
+	// Watch for changes to primary resource Assembly
+	err = c.Watch(&source.Kind{Type: &stratossv1alpha1.Assembly{}}, &handler.EnqueueRequestForObject{})
 	if err != nil {
 		return err
 	}
 
 	// TODO(user): Modify this to be the types you create that are owned by the primary resource
-	// Watch for changes to secondary resource Pods and requeue the owner Service
+	// Watch for changes to secondary resource Pods and requeue the owner Assembly
 	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
-		OwnerType:    &comv1alpha1.Assembly{},
+		OwnerType:    &stratossv1alpha1.Assembly{},
 	})
 	if err != nil {
 		return err
@@ -102,48 +100,487 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	return nil
 }
 
-// blank assignment to verify that ReconcileService implements reconcile.Reconciler
-var _ reconcile.Reconciler = &ReconcileService{}
+// blank assignment to verify that AssemblyReconciler implements reconcile.Reconciler
+var _ reconcile.Reconciler = &AssemblyReconciler{}
 
-// ReconcileService reconciles a Service object
-type ReconcileService struct {
+// AssemblyReconciler reconciles a Assembly object
+type AssemblyReconciler struct {
 	// This client, initialized using mgr.Client() above, is a split client
 	// that reads objects from the cache and writes to the apiserver
-	client     client.Client
-	scheme     *runtime.Scheme
-	restClient *resty.Client
-	ishtar     *Ishtar
+	k8sClient client.Client
+	scheme    *runtime.Scheme
+	lmClient  *lm.LMClient
 }
 
-func (r *ReconcileService) getAssembly(name types.NamespacedName) (*comv1alpha1.Assembly, error) {
-	// Fetch the Service instance
-	instance := &comv1alpha1.Assembly{}
-	err := r.client.Get(context.TODO(), name, instance)
+// AssemblySynchronizer carries the state of a single reconcile call
+type AssemblySynchronizer struct {
+	k8sClient           client.Client
+	k8sInstance         *stratossv1alpha1.Assembly
+	lmClient            lm.LMClient
+	logger              logr.Logger
+	reconcileRequest    reconcile.Request
+	stopSync            bool
+	requeue             bool
+	requeueDelay        int
+	errors              []error
+	updateError         bool
+	hasFinalizerChanges bool
+	needsStatusUpdate   bool
+	newProcessStarted   bool
+	isDeleted           bool
+}
+
+type LMSourceOfTruth struct {
+	assemblyInstance      *lm.Assembly
+	assemblyInstanceFound bool
+	latestProcess         *lm.Process
+	latestProcessFound    bool
+}
+
+func (sync *AssemblySynchronizer) onUpdateError(err error) (stopSync bool) {
+	sync.errors = append(sync.errors, err)
+	sync.stopSync = true
+	sync.requeue = true
+	sync.updateError = true
+	return sync.stopSync
+}
+
+func (sync *AssemblySynchronizer) onLMError(err error) (stopSync bool) {
+	sync.errors = append(sync.errors, err)
+	sync.stopSync = true
+	sync.requeue = true
+	return sync.stopSync
+}
+
+func (sync *AssemblySynchronizer) fetchK8sInstance() (found bool, stopSync bool) {
+	instance := &stratossv1alpha1.Assembly{}
+	err := sync.k8sClient.Get(context.TODO(), sync.reconcileRequest.NamespacedName, instance)
 	if err != nil {
-		// Error reading the object - requeue the request.
-		return nil, err
+		return false, sync.onUpdateError(err)
+	}
+	*sync.k8sInstance = (*instance)
+	return true, false
+}
+
+func (sync *AssemblySynchronizer) updateK8sInstance() (stopSync bool) {
+	err := sync.k8sClient.Update(context.TODO(), sync.k8sInstance)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Request object not found, could have been deleted after reconcile request.
+			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
+			// Return and don't requeue
+			return true
+		}
+		sync.logger.Error(err, "Failed to update Assembly (CR)")
+		return sync.onUpdateError(err)
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) updateK8sInstanceStatus() (stopSync bool) {
+	err := sync.k8sClient.Status().Update(context.TODO(), sync.k8sInstance)
+	if err != nil {
+		sync.logger.Error(err, "Failed to update Assembly (CR) status")
+		return sync.onUpdateError(err)
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) getLatestProcess() (process *lm.Process, found bool, stopSync bool) {
+	sync.logger.Info("Fetching latest Process for Assembly")
+	process, found, err := sync.lmClient.GetLatestProcess(sync.k8sInstance.Name)
+	if err != nil {
+		sync.logger.Error(err, "Failed to fetch latest Process for Assembly")
+		return nil, false, sync.onLMError(err)
+	}
+	return process, found, false
+}
+
+func (sync *AssemblySynchronizer) getAssemblyByID(assemblyID string) (lmAssembly *lm.Assembly, found bool, stopSync bool) {
+	sync.logger.Info("Fetching Assembly from LM")
+	lmAssembly, found, err := sync.lmClient.GetAssemblyByID(assemblyID)
+	if err != nil {
+		sync.logger.Error(err, "Failed to fetch Assembly")
+		return nil, false, sync.onLMError(err)
+	}
+	return lmAssembly, found, false
+}
+
+func (sync *AssemblySynchronizer) getAssemblyByName() (lmAssembly *lm.Assembly, found bool, stopSync bool) {
+	sync.logger.Info("Fetching Assembly from LM")
+	lmAssembly, found, err := sync.lmClient.GetAssemblyByName(sync.k8sInstance.Name)
+	if err != nil {
+		sync.logger.Error(err, "Failed to fetch Assembly")
+		return nil, false, sync.onLMError(err)
+	}
+	return lmAssembly, found, false
+}
+
+func (sync *AssemblySynchronizer) fetchLMSourceOfTruth() (lmSourceOfTruth *LMSourceOfTruth, stopSync bool) {
+	k8sInstance := sync.k8sInstance
+	var assemblyInstance *lm.Assembly
+	var assemblyInstanceFound bool
+	var latestProcess *lm.Process
+	var latestProcessFound bool
+	// Fetch information about the Assembly
+	if k8sInstance.Status.ID == "" {
+		// No ID known, find by name
+		assemblyInstance, assemblyInstanceFound, stopSync = sync.getAssemblyByName()
+		if stopSync {
+			return nil, stopSync
+		} else if !assemblyInstanceFound {
+			sync.logger.Info("Assembly not found by name in LM")
+		} else {
+			sync.logger.Info("Assembly found by name in LM")
+		}
+	} else {
+		// Find by ID
+		idLogger := sync.logger.WithValues(LogKeys.AssemblyID, k8sInstance.Status.ID)
+		assemblyInstance, assemblyInstanceFound, stopSync = sync.getAssemblyByID(k8sInstance.Status.ID)
+		if stopSync {
+			return &LMSourceOfTruth{}, stopSync
+		} else if !assemblyInstanceFound {
+			idLogger.Info("Assembly not found by ID in LM")
+		} else {
+			idLogger.Info("Assembly found by ID in LM")
+		}
 	}
 
-	return instance, nil
+	// Fetch information about the latest Process
+	latestProcess, latestProcessFound, stopSync = sync.getLatestProcess()
+	if stopSync {
+		return nil, stopSync
+	} else if !latestProcessFound {
+		sync.logger.Info("Latest process not found in LM")
+	} else {
+		//Ensure the process is for this Assembly (can be a previous one with the same name if recreating)
+		if latestProcess.AssemblyID == assemblyInstance.ID {
+			sync.logger.Info("Latest process found in LM")
+		} else {
+			sync.logger.Info("Latest process not found in LM")
+		}
+
+	}
+
+	return &LMSourceOfTruth{
+		assemblyInstance:      assemblyInstance,
+		assemblyInstanceFound: assemblyInstanceFound,
+		latestProcess:         latestProcess,
+		latestProcessFound:    latestProcessFound,
+	}, false
 }
 
-const assemblyFinalizer = "finalizer.com.accantosystems.stratoss"
+func (sync *AssemblySynchronizer) syncStatusWithLM() (stopSync bool) {
+	lmSourceOfTruth, stopSync := sync.fetchLMSourceOfTruth()
+	if stopSync {
+		return stopSync
+	}
+	sync.logger.Info("Syncing state with data from LM")
+	k8sInstance := sync.k8sInstance
+	assemblyInstance := lmSourceOfTruth.assemblyInstance
+	if !lmSourceOfTruth.assemblyInstanceFound {
+		k8sInstance.Status.State = "NotFound"
+		k8sInstance.Status.Properties = make(map[string]string)
+	} else {
+		k8sInstance.Status.ID = assemblyInstance.ID
+		k8sInstance.Status.DescriptorName = assemblyInstance.DescriptorName
+		if assemblyInstance.State != "" {
+			k8sInstance.Status.State = assemblyInstance.State
+		} else {
+			k8sInstance.Status.State = "None"
+		}
+		k8sInstance.Status.Properties = make(map[string]string)
+		for _, property := range assemblyInstance.Properties {
+			k8sInstance.Status.Properties[property.Name] = property.Value
+		}
+	}
 
-// Reconcile reads that state of the cluster for a Service object and makes changes based on the state read
-// and what is in the Service.Spec
-// TODO(user): Modify this Reconcile function to implement your Controller logic.  This example creates
-// a Pod as an example
+	latestProcess := lmSourceOfTruth.latestProcess
+
+	k8sInstance.Status.LastProcess = stratossv1alpha1.Process{Status: "None", IntentType: "None"}
+	if lmSourceOfTruth.latestProcessFound {
+		k8sInstance.Status.LastProcess.ID = latestProcess.ID
+		k8sInstance.Status.LastProcess.IntentType = translateIntentType(latestProcess.IntentType)
+		k8sInstance.Status.LastProcess.Status = latestProcess.Status
+		k8sInstance.Status.LastProcess.StatusReason = latestProcess.StatusReason
+	}
+
+	sync.needsStatusUpdate = true
+	//stopSync = sync.updateK8sInstanceStatus()
+	return false
+}
+
+func translateIntentType(incomingIntentType string) (outputIntentType string) {
+	switch incomingIntentType {
+	case "ChangeAssemblyState":
+		return "ChangeState"
+	case "CreateAssembly":
+		return "Create"
+	case "DeleteAssembly":
+		return "Delete"
+	case "HealAssembly":
+		return "Heal"
+	case "ScaleInAssembly":
+		return "ScaleIn"
+	case "ScaleOutAssembly":
+		return "ScaleOut"
+	case "UpgradeAssembly":
+		return "Update"
+	}
+	return incomingIntentType
+}
+
+func processIsOngoing(processStatus string) bool {
+	return processStatus == "Planned" || processStatus == "Pending" || processStatus == "In Progress"
+}
+
+func (sync *AssemblySynchronizer) checkForOngoingProcess() (stopSync bool) {
+	sync.logger.Info("Checking for ongoing process")
+	if sync.k8sInstance.Status.LastProcess.ID != "" {
+		processLogger := sync.logger.WithValues(LogKeys.ProcessID, sync.k8sInstance.Status.LastProcess.ID)
+		if processIsOngoing(sync.k8sInstance.Status.LastProcess.Status) {
+			processLogger.Info("Process has not completed yet, will requeue reconcile", LogKeys.ProcessStatus, sync.k8sInstance.Status.LastProcess.Status)
+			sync.requeue = true
+			sync.requeueDelay = 5
+			sync.stopSync = true
+			return sync.stopSync
+		} else {
+			processLogger.Info("Process complete!", LogKeys.ProcessStatus, sync.k8sInstance.Status.LastProcess.Status)
+		}
+	} else {
+		sync.logger.Info("No process associated to Assembly")
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) syncExistence() (stopSync bool) {
+	k8sInstance := sync.k8sInstance
+	isDeleting := k8sInstance.GetDeletionTimestamp() != nil
+	if isDeleting {
+		sync.logger.Info("Assembly (CR) has deletion timestamp")
+		if finalizerContains(k8sInstance.GetFinalizers(), assemblyFinalizer) {
+			if k8sInstance.Status.State == "NotFound" {
+				sync.logger.Info("Assembly no longer exists in LM, safe to remove finalizer and delete K8s instance")
+				k8sInstance.SetFinalizers(finalizerRemove(k8sInstance.GetFinalizers(), assemblyFinalizer))
+				sync.hasFinalizerChanges = true
+				sync.isDeleted = true
+				sync.stopSync = true
+				return sync.stopSync
+			} else {
+				//Trigger delete
+				processID, err := sync.lmClient.DeleteAssembly(lm.DeleteAssemblyRequest{
+					AssemblyName: k8sInstance.Name,
+				})
+				if err != nil {
+					sync.logger.Error(err, "Failed to request deletion of Assembly")
+					return sync.onLMError(err)
+				} else {
+					sync.logger.Info("Delete Assembly request accepted", LogKeys.ProcessID, processID)
+					sync.needsStatusUpdate = true
+					sync.newProcessStarted = true
+					// Requeue request to check progress
+					sync.requeue = true
+					sync.requeueDelay = 5
+					sync.stopSync = true
+					return sync.stopSync
+				}
+			}
+		} else {
+			//Finaliser already removed, allow deletion of k8s instance
+			sync.stopSync = true
+			sync.isDeleted = true
+			return sync.stopSync
+		}
+	} else {
+		// Ensure the finalizer is set on K8s instance
+		if !finalizerContains(k8sInstance.GetFinalizers(), assemblyFinalizer) {
+			sync.logger.Info("Adding Finalizer to Assembly")
+			k8sInstance.SetFinalizers(append(k8sInstance.GetFinalizers(), assemblyFinalizer))
+			sync.hasFinalizerChanges = true
+		}
+
+		// Create if not found
+		if k8sInstance.Status.State == "NotFound" {
+			sync.logger.Info("Requesting creation of Assembly")
+			processID, err := sync.lmClient.CreateAssembly(lm.CreateAssemblyRequest{
+				AssemblyName:   k8sInstance.Name,
+				DescriptorName: k8sInstance.Spec.DescriptorName,
+				IntendedState:  k8sInstance.Spec.IntendedState,
+				Properties:     k8sInstance.Spec.Properties,
+			})
+			if err != nil {
+				sync.logger.Error(err, "Failed to request creation of Assembly")
+				return sync.onLMError(err)
+			} else {
+				sync.logger.Info("Create Assembly request accepted", LogKeys.ProcessID, processID)
+				sync.needsStatusUpdate = true
+				sync.newProcessStarted = true
+				// Requeue request to check progress
+				sync.requeue = true
+				sync.requeueDelay = 5
+				sync.stopSync = true
+				return sync.stopSync
+			}
+		}
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) syncAssemblyState() (stopSync bool) {
+	k8sInstance := sync.k8sInstance
+	if k8sInstance.Status.State != k8sInstance.Spec.IntendedState {
+		//State change
+		sync.logger.Info("Requesting state change of Assembly", LogKeys.IntendedState, k8sInstance.Spec.IntendedState)
+		processID, err := sync.lmClient.ChangeAssemblyState(lm.ChangeAssemblyStateRequest{
+			AssemblyName:  k8sInstance.Name,
+			IntendedState: k8sInstance.Spec.IntendedState,
+		})
+		if err != nil {
+			sync.logger.Error(err, "Failed to request change state for Assembly")
+			return sync.onLMError(err)
+		} else {
+			sync.logger.Info("Change Assembly state request accepted", LogKeys.ProcessID, processID, LogKeys.IntendedState, k8sInstance.Spec.IntendedState)
+			sync.needsStatusUpdate = true
+			sync.newProcessStarted = true
+			// Requeue request to check progress
+			sync.requeue = true
+			sync.requeueDelay = 5
+			sync.stopSync = true
+			return sync.stopSync
+		}
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) syncAssemblyUpdateableState() (stopSync bool) {
+	k8sInstance := sync.k8sInstance
+	hasDifference := false
+	if k8sInstance.Status.DescriptorName != k8sInstance.Spec.DescriptorName {
+		sync.logger.Info("Desired Assembly descriptorName differs from current state")
+		hasDifference = true
+	}
+	if !hasDifference {
+		for propName, specPropValue := range k8sInstance.Spec.Properties {
+			statusPropValue := k8sInstance.Status.Properties[propName]
+			if statusPropValue != specPropValue {
+				sync.logger.Info("Desired Assembly property values differ from current state", LogKeys.PropertyName, propName, LogKeys.DesiredPropertyValue, specPropValue, LogKeys.ObservedPropertyValue, statusPropValue)
+				hasDifference = true
+				break
+			}
+		}
+	}
+	if hasDifference {
+		// Upgrade
+		sync.logger.Info("Requesting update of Assembly")
+		processID, err := sync.lmClient.UpgradeAssembly(lm.UpgradeAssemblyRequest{
+			AssemblyName:   k8sInstance.Name,
+			DescriptorName: k8sInstance.Spec.DescriptorName,
+			Properties:     k8sInstance.Spec.Properties,
+		})
+		if err != nil {
+			sync.logger.Error(err, "Failed to request update for Assembly")
+			return sync.onLMError(err)
+		} else {
+			sync.logger.Info("Update Assembly request accepted", LogKeys.ProcessID, processID)
+			sync.needsStatusUpdate = true
+			sync.newProcessStarted = true
+			// Requeue request to check progress
+			sync.requeue = true
+			sync.requeueDelay = 5
+			sync.stopSync = true
+			return sync.stopSync
+		}
+	}
+	return false
+}
+
+func (sync *AssemblySynchronizer) endReconcile() (reconcile.Result, error) {
+	if !sync.isDeleted {
+		if sync.newProcessStarted {
+			sync.logger.Info("New process started on this Assembly, synchronizing with latest LM state")
+			if stopSync := sync.syncStatusWithLM(); stopSync {
+				sync.logger.Info("Failed to read latest LM state")
+			} else {
+				sync.needsStatusUpdate = true
+			}
+		}
+	}
+
+	numberOfErrors := len(sync.errors)
+	var lastError error = nil
+	if numberOfErrors > 0 {
+		sync.logger.Info("Reconcile encountered errors", LogKeys.NumberOfErrors, numberOfErrors)
+		lastError = sync.errors[numberOfErrors-1]
+	} else if sync.requeue {
+		sync.logger.Info("Reconile had no errors but it must be requeued")
+	}
+
+	previousStatus := sync.k8sInstance.Status.SyncState.Status
+	previousAttempts := sync.k8sInstance.Status.SyncState.Attempts
+	previousError := sync.k8sInstance.Status.SyncState.Error
+	//Reset SyncState
+	sync.k8sInstance.Status.SyncState = stratossv1alpha1.SyncState{Status: "OK"}
+	if lastError != nil {
+		errStr := lastError.Error()
+		sync.k8sInstance.Status.SyncState.Status = "ERROR"
+		sync.k8sInstance.Status.SyncState.Error = errStr
+		sync.needsStatusUpdate = true
+		if errStr == previousError {
+			//Same error as last time
+			sync.k8sInstance.Status.SyncState.Attempts = previousAttempts + 1
+		} else {
+			//Different error
+			sync.k8sInstance.Status.SyncState.Attempts = 1
+		}
+	} else if previousStatus != "OK" {
+		// No errors, only update if the last sync status reported an error
+		sync.needsStatusUpdate = true
+	}
+
+	//Now update the K8s instance with all the changes from this reconcile
+	updateReportedStop := false
+	//Make a copy of the finalizers now incase update returns data from server
+	finalizers := make([]string, len(sync.k8sInstance.GetFinalizers()))
+	copy(finalizers, sync.k8sInstance.GetFinalizers())
+	if sync.needsStatusUpdate && !sync.isDeleted {
+		sync.logger.Info("Updating Assembly (CR) status")
+		updateReportedStop = sync.updateK8sInstanceStatus()
+	}
+	if sync.hasFinalizerChanges {
+		sync.logger.Info("Updating Assembly (CR) instance finalizers")
+		sync.k8sInstance.SetFinalizers(finalizers)
+		updateInstanceReportedStop := sync.updateK8sInstance()
+		updateReportedStop = updateReportedStop || updateInstanceReportedStop
+	}
+
+	if updateReportedStop && len(sync.errors) != numberOfErrors {
+		numberOfErrors = len(sync.errors)
+		//New update errors occurred, requeue
+		sync.logger.Info("Reconcile encountered errors whilst trying to update the K8s instance/status", LogKeys.NumberOfErrors, numberOfErrors)
+		if lastError == nil {
+			lastError = sync.errors[numberOfErrors-1]
+		}
+	}
+
+	res := reconcile.Result{Requeue: sync.requeue, RequeueAfter: time.Duration(sync.requeueDelay) * time.Second}
+	sync.logger.Info(fmt.Sprintf("Reconcile result: %+v, Reconcile error: %+v", res, lastError))
+	return res, lastError
+}
+
+// Reconcile reads that state of the cluster for a Assembly object and makes changes based on the state read
+// and what is in the Assembly.Spec
 // Note:
 // The Controller will requeue the Request to be processed again if the returned error is non-nil or
 // Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
-func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *AssemblyReconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	reqLogger := log.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
-	reqLogger.Info(fmt.Sprintf("Reconciling Assembly %s", request.Name))
+	reqLogger.Info("Reconciling Assembly")
 
-	// Fetch the Assembly resource instance from k8s
-	instance, err := r.getAssembly(request.NamespacedName)
+	// Fetch the Assembly instance
+	instance := &stratossv1alpha1.Assembly{}
+	err := r.k8sClient.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
-		if k8serrors.IsNotFound(err) {
+		if errors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
 			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
 			// Return and don't requeue
@@ -153,319 +590,42 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{}, err
 	}
 
-	reqLogger.Info(fmt.Sprintf("Processing Assembly %s [Transition %s, ProcessID %s, ProcessStatus %s, State %s, StateReason %s]", instance.Spec.AssemblyName, instance.Status.Transition, instance.Status.ProcessID, instance.Status.ProcessStatus, instance.Status.State, instance.Status.StateReason))
+	syncLogger := reqLogger.WithValues(LogKeys.AssemblyName, instance.Name)
 
-	//Does Assembly exist?
-	if instance.Status.ID != "" || instance.Status.ProcessID != "" {
-		// It should exist, make sure we have the ID and continue with the reconciliation
-		if instance.Status.ID == "" {
-			// Request to create Assembly passed but we failed to get the Assembly ID back
-			reqLogger.Info(fmt.Sprintf("Fetching Process %s for Assembly %s (to determine lost ID)", instance.Status.ProcessID, instance.Spec.AssemblyName))
-			process, err := r.ishtar.GetProcess(reqLogger, instance.Status.ProcessID)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to get Process %s - will requeue reconcile request for %s", instance.Status.ProcessID, instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-			instance.Status.ID = process.AssemblyID
-			err = r.client.Status().Update(context.TODO(), instance)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly ID for %s", instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-		}
-	}else{
-		//No ID or Process, must create Assembly (TODO: add logic to check if Assembly exists in LM, then re-create if not)
-		reqLogger.Info(fmt.Sprintf("Requesting creation of Assembly %s", instance.Spec.AssemblyName))
-		processID, err := r.ishtar.CreateAssembly(reqLogger, CreateAssemblyBody{
-			AssemblyName:   instance.Spec.AssemblyName,
-			DescriptorName: instance.Spec.DescriptorName,
-			IntendedState:  instance.Spec.IntendedState,
-			Properties:     instance.Spec.Properties,
-		})
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to request creation of Assembly %s", instance.Spec.AssemblyName))
-			instance.Status.State = "ERROR"
-			instance.Status.StateReason = err.Error()
-			err = r.client.Status().Update(context.TODO(), instance)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-			//Ends reconciliation
-			return reconcile.Result{}, nil
-		}
-
-		// Ensure finalizer for this Instance (so we can perform cleanup tasks on Delete)
-		if !contains(instance.GetFinalizers(), assemblyFinalizer) {
-			reqLogger.Info(fmt.Sprintf("Adding Finalizer for Assembly %s", instance.Spec.AssemblyName))
-			instance.SetFinalizers(append(instance.GetFinalizers(), assemblyFinalizer))
-			// Update CR
-			err := r.client.Update(context.TODO(), instance)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly %s with finalizer", instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-		}
-		instance.Status.Transition = "Create"
-		instance.Status.ProcessID = processID
-		instance.Status.ProcessStatus = "Pending"
-		instance.Status.State = "Pending"
-		instance.Status.StateReason = ""
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			//TODO that will attempt to re-create, which will fail as it has the same name - need to handle that.
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		reqLogger.Info(fmt.Sprintf("Fetching Process %s for Assembly %s (to determine ID)", instance.Status.ProcessID, instance.Spec.AssemblyName))
-		process, err := r.ishtar.GetProcess(reqLogger, instance.Status.ProcessID)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to get Process %s - will requeue reconcile request for %s", instance.Status.ProcessID, instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		instance.Status.ID = process.AssemblyID
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		// requeue to check on progress
-		return reconcile.Result{Requeue: true}, nil
-	}
-	
-	//Check for existing transition
-	if instance.Status.ProcessStatus == "Pending" || instance.Status.ProcessStatus == "In Progress" {
-		reqLogger.Info(fmt.Sprintf("Fetching Process %s for Assembly %s", instance.Status.ProcessID, instance.Spec.AssemblyName))
-		process, err := r.ishtar.GetProcess(reqLogger, instance.Status.ProcessID)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to get process %s - will requeue reconcile request for %s", instance.Status.ProcessID, instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-
-		// Update based on process information
-		instance.Status.ProcessStatus = process.Status
-		instance.Status.StateReason = ""
-		transitionFinished := false
-		assemblyShouldExist := instance.Status.Transition != "Remove" || (process.Status == "Pending" || process.Status == "In Progress")
-		if process.Status == "Completed" || process.Status == "Cancelled" || process.Status == "Failed" {
-			transitionFinished = true
-		}
-		if process.Status == "Failed" {
-			instance.Status.StateReason = process.StatusReason
-		}
-
-		//Update Assembly State
-		if assemblyShouldExist {
-			reqLogger.Info(fmt.Sprintf("Fetching Assembly instance %s", instance.Spec.AssemblyName))
-			assembly, err := r.ishtar.GetAssembly(reqLogger, instance.Status.ID)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to get assembly %s", instance.Spec.AssemblyName))
-				if err.Error() == fmt.Sprintf("Assembly not found (%s)", instance.Status.ID) && instance.Status.Transition == "Remove" {
-					reqLogger.Info(fmt.Sprintf("Ignoring failure to fetch Assembly instance %s as it's being removed", instance.Spec.AssemblyName))
-				}else{
-					instance.Status.State = "ERROR"
-					instance.Status.StateReason = err.Error()
-					err = r.client.Status().Update(context.TODO(), instance)
-					if err != nil {
-						reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-						return reconcile.Result{}, err
-					}
-					//Ends reconciliation
-					return reconcile.Result{}, nil
-				}
-			}else{
-				instance.Status.State = assembly.State
-			}
-		}
-
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-
-		//Process not finished so requeue 
-		if !transitionFinished {
-			return reconcile.Result{Requeue: true}, nil
-		}
+	sync := &AssemblySynchronizer{
+		k8sClient:        r.k8sClient,
+		k8sInstance:      instance,
+		lmClient:         *r.lmClient,
+		logger:           syncLogger,
+		reconcileRequest: request,
+		stopSync:         false,
+		requeue:          false,
 	}
 
-	//Is the Assembly resource being deleted?
-	toBeDeleted := instance.GetDeletionTimestamp() != nil
-	if toBeDeleted {
-		reqLogger.Info(fmt.Sprintf("Assembly %s has deletion timestamp %s", instance.Spec.AssemblyName, instance.GetDeletionTimestamp()))
-		if contains(instance.GetFinalizers(), assemblyFinalizer) {
-			//Need to delete the Assembly in LM
-			reqLogger.Info(fmt.Sprintf("Assembly %s includes finalizer, needs to be deleted (or check existing delete request)", instance.Spec.AssemblyName))
-
-			if instance.Status.Transition == "Remove" && instance.Status.ProcessStatus == "Completed" {
-				reqLogger.Info(fmt.Sprintf("Assembly %s removed, clearing finalizer", instance.Spec.AssemblyName))
-				// We have already deleted the Assembly, remove the finalizer
-				instance.SetFinalizers(remove(instance.GetFinalizers(), assemblyFinalizer))
-				err = r.client.Update(context.TODO(), instance)
-				if err != nil {
-					reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly finalizers - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-					return reconcile.Result{}, err
-				}
-				// Ends reconciliation
-				return reconcile.Result{Requeue: true}, nil
-			}else{
-				// Trigger delete
-				reqLogger.Info(fmt.Sprintf("Requesting removal of Assembly %s", instance.Spec.AssemblyName))
-				reqLogger.Info(fmt.Sprintf("Fetching Assembly instance %s", instance.Spec.AssemblyName))
-				assembly, err := r.ishtar.GetAssembly(reqLogger, instance.Status.ID)
-				if err != nil {
-					reqLogger.Error(err, fmt.Sprintf("Failed to get assembly %s", instance.Spec.AssemblyName))
-					instance.Status.State = "ERROR"
-					instance.Status.StateReason = err.Error()
-					err = r.client.Status().Update(context.TODO(), instance)
-					if err != nil {
-						reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-						return reconcile.Result{}, err
-					}
-					// Ends reconciliation
-					return reconcile.Result{}, nil
-				}
-
-				processID, err := r.ishtar.DeleteAssembly(reqLogger, DeleteAssemblyBody{
-					AssemblyName: instance.Spec.AssemblyName,
-				})
-				if err != nil {
-					reqLogger.Error(err, fmt.Sprintf("Failed to request delete of Assembly %s", instance.Spec.AssemblyName))
-					instance.Status.State = "ERROR"
-					instance.Status.StateReason = err.Error()
-					err = r.client.Status().Update(context.TODO(), instance)
-					if err != nil {
-						reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-						return reconcile.Result{}, err
-					}
-					// Ends reconciliation
-					return reconcile.Result{}, nil
-				}
-				instance.Status.Transition = "Remove"
-				instance.Status.ProcessID = processID
-				instance.Status.ProcessStatus = "Pending"
-				instance.Status.State = assembly.State
-				instance.Status.StateReason = ""
-				err = r.client.Status().Update(context.TODO(), instance)
-				if err != nil {
-					reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-					return reconcile.Result{}, err
-				}
-				// requeue to check on progress
-				return reconcile.Result{Requeue: true}, nil
-			}
-		}
+	if stopSync := sync.syncStatusWithLM(); stopSync {
+		return sync.endReconcile()
 	}
 
-	// Look for differences
-	reqLogger.Info(fmt.Sprintf("Fetching Assembly instance %s", instance.Spec.AssemblyName))
-	assembly, err := r.ishtar.GetAssembly(reqLogger, instance.Status.ID)
-	if err != nil {
-		reqLogger.Error(err, fmt.Sprintf("Failed to get assembly %s", instance.Spec.AssemblyName))
-		instance.Status.State = "ERROR"
-		instance.Status.StateReason = err.Error()
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		// Ends reconciliation
-		return reconcile.Result{}, nil
+	if stopSync := sync.checkForOngoingProcess(); stopSync {
+		return sync.endReconcile()
 	}
 
-	hasDifference := false
-	hasStateChange := false
-	if assembly.Name != instance.Spec.AssemblyName {
-		//TODO - error on name change
-	}
-	if assembly.State != instance.Spec.IntendedState {
-		hasStateChange = true
-	}
-	if assembly.DescriptorName != instance.Spec.DescriptorName {
-		hasDifference = true
-	}
-	for k, v := range instance.Spec.Properties {
-		for _, element := range assembly.Properties {
-			if element.Name == k {
-				if element.Value != v {
-					hasDifference = true
-				}
-			}
-		}
+	if stopSync := sync.syncExistence(); stopSync {
+		return sync.endReconcile()
 	}
 
-	//Handle property differences before state changes
-	if hasDifference {
-		//Ready to apply differences
-		reqLogger.Info(fmt.Sprintf("Requesting upgrade of Assembly %s", instance.Spec.AssemblyName))
-		processID, err := r.ishtar.UpgradeAssembly(reqLogger, UpgradeAssemblyBody{
-			AssemblyName:   assembly.Name,
-			DescriptorName: instance.Spec.DescriptorName,
-			Properties:     instance.Spec.Properties,
-		})
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to request upgrade of Assembly %s", instance.Spec.AssemblyName))
-			instance.Status.State = "ERROR"
-			instance.Status.StateReason = err.Error()
-			err = r.client.Status().Update(context.TODO(), instance)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-			return reconcile.Result{}, nil
-		}
-		instance.Status.Transition = "Update"
-		instance.Status.ProcessID = processID
-		instance.Status.ProcessStatus = "Pending"
-		instance.Status.State = assembly.State
-		instance.Status.StateReason = ""
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		// requeue to check on progress
-		return reconcile.Result{Requeue: true}, nil
+	if stopSync := sync.syncAssemblyState(); stopSync {
+		return sync.endReconcile()
 	}
 
-	if hasStateChange {
-		//Must change state
-		reqLogger.Info(fmt.Sprintf("Requesting state change of Assembly %s to %s", instance.Spec.AssemblyName, instance.Spec.IntendedState))
-		processID, err := r.ishtar.ChangeAssemblyState(reqLogger, ChangeAssemblyStateBody{
-			AssemblyName: assembly.Name,
-			IntendedState: instance.Spec.IntendedState,
-		})
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to request state change of Assembly %s", instance.Spec.AssemblyName))
-			instance.Status.State = "ERROR"
-			instance.Status.StateReason = err.Error()
-			err = r.client.Status().Update(context.TODO(), instance)
-			if err != nil {
-				reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-				return reconcile.Result{}, err
-			}
-			return reconcile.Result{}, nil
-		}
-		instance.Status.Transition = "ChangeState"
-		instance.Status.ProcessID = processID
-		instance.Status.ProcessStatus = "Pending"
-		instance.Status.State = assembly.State
-		instance.Status.StateReason = ""
-		err = r.client.Status().Update(context.TODO(), instance)
-		if err != nil {
-			reqLogger.Error(err, fmt.Sprintf("Failed to update Assembly status - will requeue reconcile request for %s", instance.Spec.AssemblyName))
-			return reconcile.Result{}, err
-		}
-		// requeue to check on progress
-		return reconcile.Result{Requeue: true}, nil
+	if stopSync := sync.syncAssemblyUpdateableState(); stopSync {
+		return sync.endReconcile()
 	}
-	
-	// Finally, ends reconciliation as there is nothing to check
-	return reconcile.Result{}, nil
+
+	return sync.endReconcile()
 }
 
-func contains(list []string, s string) bool {
+func finalizerContains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
 			return true
@@ -474,7 +634,7 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func remove(list []string, s string) []string {
+func finalizerRemove(list []string, s string) []string {
 	for i, v := range list {
 		if v == s {
 			list = append(list[:i], list[i+1:]...)

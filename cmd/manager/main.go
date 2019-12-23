@@ -11,8 +11,9 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/rest"
 
-	"github.com/orgs/accanto-systems/assembly-operator/pkg/apis"
-	"github.com/orgs/accanto-systems/assembly-operator/pkg/controller"
+	"github.com/accanto/assembly-operator/pkg/apis"
+	"github.com/accanto/assembly-operator/pkg/controller"
+	"github.com/accanto/assembly-operator/version"
 
 	"github.com/operator-framework/operator-sdk/pkg/k8sutil"
 	kubemetrics "github.com/operator-framework/operator-sdk/pkg/kube-metrics"
@@ -25,9 +26,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
-	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
+	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 )
 
 // Change below variables to serve metrics on different host or port.
@@ -39,6 +40,7 @@ var (
 var log = logf.Log.WithName("cmd")
 
 func printVersion() {
+	log.Info(fmt.Sprintf("Operator Version: %s", version.Version))
 	log.Info(fmt.Sprintf("Go Version: %s", runtime.Version()))
 	log.Info(fmt.Sprintf("Go OS/Arch: %s/%s", runtime.GOOS, runtime.GOARCH))
 	log.Info(fmt.Sprintf("Version of operator-sdk: %v", sdkVersion.Version))
@@ -143,29 +145,12 @@ func main() {
 
 	log.Info("Starting the Cmd.")
 
-	// go func() {
-	// 	router := mux.NewRouter().StrictSlash(true)
-	// 	router.HandleFunc("/", lifecycleDriver)
-	// 	fmt.Println("listen on 8298")
-	// 	log.Error(http.ListenAndServe(":8298", router), "Oops")
-	// }()
-
 	// Start the Cmd
 	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
 		log.Error(err, "Manager exited non-zero")
 		os.Exit(1)
 	}
 }
-
-// func lifecycleDriver(w http.ResponseWriter, r *http.Request) {
-// 	template := mux.Vars(r)["template"]
-// 	// deploymentLocation := mux.Vars(r)["deploymentLocation"]
-// 	inputs := mux.Vars(r)["inputs"]
-
-// 	var t toscalib.ServiceTemplateDefinition
-// 	err := t.Parse(strings.NewReader(template))
-
-// }
 
 // serveCRMetrics gets the Operator/CustomResource GVKs and generates metrics based on those types.
 // It serves those metrics on "http://metricsHost:operatorMetricsPort".

@@ -1,0 +1,173 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: assemblies.stratoss.accantosystems.com
+spec:
+  additionalPrinterColumns:
+  - JSONPath: .status.syncState.status
+    description: Details if the operator was able to synchronize this Assembly when
+      handling the last event
+    name: Synchronized
+    type: string
+  - JSONPath: .status.descriptorName
+    description: The current observed Descriptor of the Assembly
+    name: Descriptor
+    type: string
+  - JSONPath: .status.state
+    description: The current observed State of the Assembly
+    name: State
+    type: string
+  - JSONPath: .status.lastProcess.intentType
+    description: The last observed Process type
+    name: LastProcess
+    type: string
+  - JSONPath: .status.lastProcess.status
+    description: The last observed Process status
+    name: ProcessStatus
+    type: string
+  - JSONPath: .metadata.creationTimestamp
+    description: The amount of time this Assembly has existed for
+    name: Age
+    type: date
+  group: stratoss.accantosystems.com
+  names:
+    kind: Assembly
+    listKind: AssemblyList
+    plural: assemblies
+    singular: assembly
+  scope: Namespaced
+  subresources:
+    status: {}
+  validation:
+    openAPIV3Schema:
+      description: Assembly is the Schema for the assemblies API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: AssemblySpec defines the desired state of Assembly
+          properties:
+            descriptorName:
+              description: The descriptor name from which this Assembly will be modelled
+                (in the form of "assembly::<name>::<version>")
+              type: string
+            intendedState:
+              description: The final intended state that the Assembly should be in
+              type: string
+            properties:
+              additionalProperties:
+                type: string
+              description: An optional map of name and string value properties supplied
+                to configure the Assembly (valid values are properties defined on
+                the descriptor in use)
+              type: object
+          required:
+          - descriptorName
+          - intendedState
+          - properties
+          type: object
+        status:
+          description: AssemblyStatus defines the observed state of Assembly
+          properties:
+            assemblyId:
+              description: ID of the Assembly
+              type: string
+            descriptorName:
+              description: The current descriptor name from which this Assembly was
+                modelled (in the form of "assembly::<name>::<version>")
+              type: string
+            lastProcess:
+              description: Details of the last process triggered by the operator on
+                an Assembly
+              properties:
+                intentType:
+                  description: Type of process
+                  enum:
+                  - Create
+                  - ChangeState
+                  - Update
+                  - Delete
+                  - None
+                  type: string
+                processId:
+                  description: ID of the process
+                  type: string
+                status:
+                  description: Status of the process
+                  enum:
+                  - Planned
+                  - Pending
+                  - In Progress
+                  - Completed
+                  - Cancelled
+                  - Failed
+                  - None
+                  type: string
+                statusReason:
+                  description: Describes the reason of the Status, usually only set
+                    when Failed
+                  type: string
+              required:
+              - intentType
+              - processId
+              - status
+              - statusReason
+              type: object
+            properties:
+              additionalProperties:
+                type: string
+              description: An optional map of name and string value properties supplied
+                to configure the Assembly (valid values are properties defined on
+                the descriptor in use)
+              type: object
+            state:
+              description: State of the Assembly at last reconcile
+              enum:
+              - Failed
+              - Created
+              - Installed
+              - Inactive
+              - Broken
+              - Active
+              - NotFound
+              - None
+              type: string
+            syncState:
+              description: Details the success to synchronize this Assembly with LM
+              properties:
+                attempts:
+                  description: Number of times this error has led to a retry
+                  type: integer
+                error:
+                  description: Error message
+                  type: string
+                status:
+                  description: Status of synchronize (has there been an error?)
+                  type: string
+              required:
+              - attempts
+              - error
+              - status
+              type: object
+          required:
+          - assemblyId
+          - descriptorName
+          - properties
+          - state
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
