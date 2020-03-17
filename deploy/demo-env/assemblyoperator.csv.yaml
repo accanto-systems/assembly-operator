@@ -1,0 +1,424 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: assemblies.stratoss.accantosystems.com
+spec:
+  additionalPrinterColumns:
+  - JSONPath: .status.syncState.status
+    description: Details if the operator was able to synchronize this Assembly when
+      handling the last event
+    name: Synchronized
+    type: string
+  - JSONPath: .status.descriptorName
+    description: The current observed Descriptor of the Assembly
+    name: Descriptor
+    type: string
+  - JSONPath: .status.state
+    description: The current observed State of the Assembly
+    name: State
+    type: string
+  - JSONPath: .status.lastProcess.intentType
+    description: The last observed Process type
+    name: LastProcess
+    type: string
+  - JSONPath: .status.lastProcess.status
+    description: The last observed Process status
+    name: ProcessStatus
+    type: string
+  - JSONPath: .metadata.creationTimestamp
+    description: The amount of time this Assembly has existed for
+    name: Age
+    type: date
+  group: stratoss.accantosystems.com
+  names:
+    kind: Assembly
+    listKind: AssemblyList
+    plural: assemblies
+    singular: assembly
+  scope: Namespaced
+  validation:
+    openAPIV3Schema:
+      description: Assembly is the Schema for the assemblies API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: AssemblySpec defines the desired state of Assembly
+          properties:
+            descriptorName:
+              description: The descriptor name from which this Assembly will be modelled
+                (in the form of "assembly::<name>::<version>")
+              type: string
+            intendedState:
+              description: The final intended state that the Assembly should be in
+              type: string
+            properties:
+              additionalProperties:
+                type: string
+              description: An optional map of name and string value properties supplied
+                to configure the Assembly (valid values are properties defined on
+                the descriptor in use)
+              type: object
+          required:
+          - descriptorName
+          - intendedState
+          - properties
+          type: object
+        status:
+          description: AssemblyStatus defines the observed state of Assembly
+          properties:
+            assemblyId:
+              description: ID of the Assembly
+              type: string
+            descriptorName:
+              description: The current descriptor name from which this Assembly was
+                modelled (in the form of "assembly::<name>::<version>")
+              type: string
+            lastProcess:
+              description: Details of the last process triggered by the operator on
+                an Assembly
+              properties:
+                intentType:
+                  description: Type of process
+                  enum:
+                  - Create
+                  - ChangeState
+                  - Update
+                  - Delete
+                  - None
+                  type: string
+                processId:
+                  description: ID of the process
+                  type: string
+                status:
+                  description: Status of the process
+                  enum:
+                  - Planned
+                  - Pending
+                  - In Progress
+                  - Completed
+                  - Cancelled
+                  - Failed
+                  - None
+                  type: string
+                statusReason:
+                  description: Describes the reason of the Status, usually only set
+                    when Failed
+                  type: string
+              required:
+              - intentType
+              - processId
+              - status
+              - statusReason
+              type: object
+            properties:
+              additionalProperties:
+                type: string
+              description: An optional map of name and string value properties supplied
+                to configure the Assembly (valid values are properties defined on
+                the descriptor in use)
+              type: object
+            state:
+              description: State of the Assembly at last reconcile
+              enum:
+              - Failed
+              - Created
+              - Installed
+              - Inactive
+              - Broken
+              - Active
+              - NotFound
+              - None
+              type: string
+            syncState:
+              description: Details the success to synchronize this Assembly with LM
+              properties:
+                attempts:
+                  description: Number of times this error has led to a retry
+                  type: integer
+                error:
+                  description: Error message
+                  type: string
+                status:
+                  description: Status of synchronize (has there been an error?)
+                  type: string
+              required:
+              - attempts
+              - error
+              - status
+              type: object
+          required:
+          - assemblyId
+          - descriptorName
+          - properties
+          - state
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: assembly-operator
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assembly-operator-config
+data:
+  config.yaml: |
+    base: https://ishtar:8280
+    client: LmClient
+    clientSecret: pass123
+    secure: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  creationTimestamp: null
+  name: assembly-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  - services/finalizers
+  - endpoints
+  - persistentvolumeclaims
+  - events
+  - configmaps
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  - replicasets
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - get
+  - create
+- apiGroups:
+  - apps
+  resourceNames:
+  - assembly-operator
+  resources:
+  - deployments/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  - deployments
+  verbs:
+  - get
+- apiGroups:
+  - stratoss.accantosystems.com
+  resources:
+  - '*'
+  - assemblies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: assembly-operator
+subjects:
+- kind: ServiceAccount
+  name: assembly-operator
+roleRef:
+  kind: Role
+  name: assembly-operator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: assembly-operator.v0.1
+  namespace: default
+spec:
+  description: Operator for managing Assembly Instances
+  displayName: Assembly Operator  
+  customresourcedefinitions:
+    owned:
+      - kind: Assembly
+        name: assemblies.stratoss.accantosystems.com
+        version: v1alpha1
+        description: An assembly
+        displayName: Accanto Assembly
+  installModes:
+    - supported: true
+      type: OwnNamespace
+  install:  
+    strategy: deployment
+    spec:
+      permissions:
+        - serviceAccountName: assembly-operator
+          rules:
+            - apiGroups:
+              - ""
+              resources:
+              - pods
+              - services
+              - services/finalizers
+              - endpoints
+              - persistentvolumeclaims
+              - events
+              - configmaps
+              - secrets
+              verbs:
+              - create
+              - delete
+              - get
+              - list
+              - patch
+              - update
+              - watch
+            - apiGroups:
+              - apps
+              resources:
+              - deployments
+              - daemonsets
+              - replicasets
+              - statefulsets
+              verbs:
+              - create
+              - delete
+              - get
+              - list
+              - patch
+              - update
+              - watch
+            - apiGroups:
+              - monitoring.coreos.com
+              resources:
+              - servicemonitors
+              verbs:
+              - get
+              - create
+            - apiGroups:
+              - apps
+              resourceNames:
+              - assembly-operator
+              resources:
+              - deployments/finalizers
+              verbs:
+              - update
+            - apiGroups:
+              - ""
+              resources:
+              - pods
+              verbs:
+              - get
+            - apiGroups:
+              - apps
+              resources:
+              - replicasets
+              - deployments
+              verbs:
+              - get
+            - apiGroups:
+              - stratoss.accantosystems.com
+              resources:
+              - '*'
+              - assemblies
+              verbs:
+              - create
+              - delete
+              - get
+              - list
+              - patch
+              - update
+              - watch     
+      deployments:
+        - name: assembly-operator
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                name: assembly-operator
+            template:
+              metadata:
+                labels:
+                  name: assembly-operator
+              spec:
+                serviceAccountName: assembly-operator
+                containers:
+                  - name: assembly-operator
+                    # Replace this with the built image name
+                    image: assembly-operator:0.1.0
+                    command:
+                    - assembly-operator
+                    imagePullPolicy: Never
+                    env:
+                      - name: WATCH_NAMESPACE
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.namespace
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: OPERATOR_NAME
+                        value: "assembly-operator"
+                    volumeMounts:
+                    - name: assembly-operator-config
+                      mountPath: /var/assembly-operator
+                volumes:
+                  - name: assembly-operator-config
+                    configMap:
+                      name: assembly-operator-config
+  icon:
+    - base64data: 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
+      mediatype: image/png
+
+

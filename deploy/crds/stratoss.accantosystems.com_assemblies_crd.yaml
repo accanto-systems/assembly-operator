@@ -36,8 +36,6 @@ spec:
     plural: assemblies
     singular: assembly
   scope: Namespaced
-  subresources:
-    status: {}
   validation:
     openAPIV3Schema:
       description: Assembly is the Schema for the assemblies API
